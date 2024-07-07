@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 
+	eCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/fbsobreira/gotron-sdk/pkg/common"
 )
@@ -110,4 +111,8 @@ func (a *Address) Scan(src interface{}) error {
 // Value implements valuer for database/sql.
 func (a Address) Value() (driver.Value, error) {
 	return []byte(a), nil
+}
+
+func (a Address) EthAddress() eCommon.Address {
+	return eCommon.BytesToAddress(a.Bytes()[1:])
 }

@@ -80,7 +80,7 @@ func (g *GrpcClient) UpdateSettingContract(from, contractAddress string, value i
 }
 
 // TriggerConstantContract and return tx result
-func (g *GrpcClient) TriggerConstantContract(from, contractAddress, method, jsonString string) (*api.TransactionExtention, error) {
+func (g *GrpcClient) TriggerConstantContract(from, contractAddress, method string, params []any) (*api.TransactionExtention, error) {
 	var err error
 	fromDesc := address.HexToAddress("410000000000000000000000000000000000000000")
 	if len(from) > 0 {
@@ -94,12 +94,7 @@ func (g *GrpcClient) TriggerConstantContract(from, contractAddress, method, json
 		return nil, err
 	}
 
-	param, err := abi.LoadFromJSON(jsonString)
-	if err != nil {
-		return nil, err
-	}
-
-	dataBytes, err := abi.Pack(method, param)
+	dataBytes, err := abi.Pack(method, params)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +117,7 @@ func (g *GrpcClient) triggerConstantContract(ct *core.TriggerSmartContract) (*ap
 }
 
 // TriggerContract and return tx result
-func (g *GrpcClient) TriggerContract(from, contractAddress, method, jsonString string,
+func (g *GrpcClient) TriggerContract(from, contractAddress, method string, params []any,
 	feeLimit, tAmount int64, tTokenID string, tTokenAmount int64) (*api.TransactionExtention, error) {
 	fromDesc, err := address.Base58ToAddress(from)
 	if err != nil {
@@ -134,12 +129,7 @@ func (g *GrpcClient) TriggerContract(from, contractAddress, method, jsonString s
 		return nil, err
 	}
 
-	param, err := abi.LoadFromJSON(jsonString)
-	if err != nil {
-		return nil, err
-	}
-
-	dataBytes, err := abi.Pack(method, param)
+	dataBytes, err := abi.Pack(method, params)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +175,7 @@ func (g *GrpcClient) triggerContract(ct *core.TriggerSmartContract, feeLimit int
 }
 
 // EstimateEnergy returns enery required
-func (g *GrpcClient) EstimateEnergy(from, contractAddress, method, jsonString string,
+func (g *GrpcClient) EstimateEnergy(from, contractAddress, method string, params []any,
 	tAmount int64, tTokenID string, tTokenAmount int64) (*api.EstimateEnergyMessage, error) {
 	fromDesc, err := address.Base58ToAddress(from)
 	if err != nil {
@@ -197,12 +187,7 @@ func (g *GrpcClient) EstimateEnergy(from, contractAddress, method, jsonString st
 		return nil, err
 	}
 
-	param, err := abi.LoadFromJSON(jsonString)
-	if err != nil {
-		return nil, err
-	}
-
-	dataBytes, err := abi.Pack(method, param)
+	dataBytes, err := abi.Pack(method, params)
 	if err != nil {
 		return nil, err
 	}

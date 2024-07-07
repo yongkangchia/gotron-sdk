@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -92,51 +93,65 @@ func convertToInt(ty eABI.Type, v interface{}) interface{} {
 }
 
 // GetPaddedParam from struct
-func GetPaddedParam(param []Param) ([]byte, error) {
+func GetPaddedParam(params []any) ([]byte, error) {
 	values := make([]interface{}, 0)
 	arguments := eABI.Arguments{}
 
-	for _, p := range param {
-		if len(p) != 1 {
-			return nil, fmt.Errorf("invalid param %+v", p)
+	for i := 0; i < len(params); i += 2 {
+		k := params[i]
+		v := params[i+1]
+
+		kStr, ok := k.(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid non-string type %+v", kStr)
 		}
-		for k, v := range p {
-			ty, err := eABI.NewType(k, "", nil)
-			if err != nil {
-				return nil, fmt.Errorf("invalid param %+v: %+v", p, err)
-			}
-			arguments = append(arguments,
-				eABI.Argument{
-					Name:    "",
-					Type:    ty,
-					Indexed: false,
-				},
-			)
 
-			if ty.T == eABI.SliceTy || ty.T == eABI.ArrayTy {
-				if ty.Elem.T == eABI.AddressTy {
-					tmp, ok := v.([]interface{})
-					if !ok {
-						return nil, fmt.Errorf("unable to convert array of addresses %+v", p)
-					}
-					v = make([]eCommon.Address, 0)
-					for i := range tmp {
-						addr, err := convetToAddress(tmp[i])
+		ty, err := eABI.NewType(kStr, "", nil)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse type %s: %w", kStr, err)
+		}
+
+		arguments = append(arguments,
+			eABI.Argument{
+				Name:    "",
+				Type:    ty,
+				Indexed: false,
+			},
+		)
+
+		if ty.T == eABI.SliceTy || ty.T == eABI.ArrayTy {
+			if ty.Elem.T == eABI.AddressTy {
+				addressStrSlice, ok := v.([]string)
+				if ok {
+					// Handle base58 addresses
+					updatedAddresses := []eCommon.Address{}
+					for _, addressStr := range addressStrSlice {
+						a, err := address.Base58ToAddress(addressStr)
 						if err != nil {
-							return nil, err
+							break
 						}
-						v = append(v.([]eCommon.Address), addr)
+						updatedAddresses = append(updatedAddresses, a.EthAddress())
 					}
-
+					if len(updatedAddresses) > 0 {
+						if len(updatedAddresses) != len(addressStrSlice) {
+							return nil, errors.New("failed to convert all base58 addresses")
+						}
+						v = updatedAddresses
+					}
 				}
-
-				if (ty.Elem.T == eABI.IntTy || ty.Elem.T == eABI.UintTy) &&
-					ty.Elem.Size > 64 {
-					tmp := make([]*big.Int, 0)
-					tmpSlice, ok := v.([]string)
-					if !ok {
-						return nil, fmt.Errorf("unable to convert array of unints %+v", p)
+				sdkAddressSlice, ok := v.([]address.Address)
+				if ok {
+					updatedAddresses := []eCommon.Address{}
+					for _, sdkAddress := range sdkAddressSlice {
+						updatedAddresses = append(updatedAddresses, sdkAddress.EthAddress())
 					}
+					v = updatedAddresses
+				}
+			} else if (ty.Elem.T == eABI.IntTy || ty.Elem.T == eABI.UintTy) &&
+				ty.Elem.Size > 64 {
+				tmpSlice, ok := v.([]string)
+				if ok {
+					tmp := make([]*big.Int, 0)
 					for i := range tmpSlice {
 						var value *big.Int
 						// check for hex char
@@ -149,74 +164,25 @@ func GetPaddedParam(param []Param) ([]byte, error) {
 					}
 					v = tmp
 				}
-
-				// handle bytes[]
-				if ty.Elem.T == eABI.BytesTy || ty.Elem.T == eABI.FixedBytesTy {
-					// Type handling is needed as GetPaddedParams is public and different inputs can be passed in which results in different types of v
-					switch v.(type) {
-					case []interface{}:
-						tmp, ok := v.([]interface{})
-						if !ok {
-							return nil, fmt.Errorf("unable to convert array of bytes %+v", p)
-						}
-						bytesSlice := make([][]byte, len(tmp))
-
-						for i := range tmp {
-							if tmp[i] == nil {
-								// Handle empty byte array
-								bytesSlice[i] = []byte{}
-							} else {
-								value, err := convertToBytes(*ty.Elem, tmp[i])
-								if err != nil {
-									return nil, fmt.Errorf("unable to convert bytes element %+v: %v", tmp[i], err)
-								}
-								bytesSlice[i] = value.([]byte)
-							}
-						}
-						v = bytesSlice
-					case string:
-						tmp := v.(string)
-						v, err = processJSONArray(tmp)
-						if err != nil {
-							return nil, err
-						}
-					case []uint8:
-						tmp, ok := v.([][]uint8)
-						bytesSlice := make([][]byte, len(tmp))
-						for i := range tmp {
-							if !ok {
-								return nil, fmt.Errorf("unable to convert array of bytes %+v", p)
-							}
-							if len(tmp[i]) == 0 {
-								// Handle empty byte array
-								bytesSlice[i] = nil
-							} else {
-								bytesSlice[i] = tmp[i]
-							}
-						}
-						v = bytesSlice
-					}
+			}
+		} else if ty.T == eABI.AddressTy {
+			if v, err = convetToAddress(v); err != nil {
+				return nil, err
+			}
+		} else if (ty.T == eABI.IntTy || ty.T == eABI.UintTy) && reflect.TypeOf(v).Kind() == reflect.String {
+			v = convertToInt(ty, v)
+		} else if ty.T == eABI.BytesTy || ty.T == eABI.FixedBytesTy {
+			if data, ok := v.(string); ok {
+				converted, err := convertStringToBytes(ty, data)
+				if err != nil {
+					v = converted
 				}
 			}
-			if ty.T == eABI.AddressTy {
-				if v, err = convetToAddress(v); err != nil {
-					return nil, err
-				}
-			}
-			if (ty.T == eABI.IntTy || ty.T == eABI.UintTy) && reflect.TypeOf(v).Kind() == reflect.String {
-				v = convertToInt(ty, v)
-			}
-
-			if ty.T == eABI.BytesTy || ty.T == eABI.FixedBytesTy {
-				var err error
-				if v, err = convertToBytes(ty, v); err != nil {
-					return nil, err
-				}
-			}
-
-			values = append(values, v)
 		}
+
+		values = append(values, v)
 	}
+
 	// convert params to bytes
 	return arguments.PackValues(values)
 }
@@ -237,55 +203,59 @@ func processJSONArray(input string) ([][]byte, error) {
 	return bytesSlice, nil
 }
 
-func convertToBytes(ty eABI.Type, v interface{}) (interface{}, error) {
+func convertStringToBytes(ty eABI.Type, data string) (interface{}, error) {
 	// if string
-	if data, ok := v.(string); ok {
-		// convert from hex string
-		dataBytes, err := hex.DecodeString(data)
+	// convert from hex string
+	dataBytes, err := hex.DecodeString(data)
+	if err != nil {
+		// try with base64
+		dataBytes, err = base64.StdEncoding.DecodeString(data)
 		if err != nil {
-			// try with base64
-			dataBytes, err = base64.StdEncoding.DecodeString(data)
-			if err != nil {
-				return nil, err
-			}
-		}
-		// if array and size == 0
-		if ty.T == eABI.BytesTy || ty.Size == 0 {
-			return dataBytes, nil
-		}
-		if len(dataBytes) != ty.Size {
-			return nil, fmt.Errorf("invalid size: %d/%d", ty.Size, len(dataBytes))
-		}
-		switch ty.Size {
-		case 1:
-			value := [1]byte{}
-			copy(value[:], dataBytes[:1])
-			return value, nil
-		case 2:
-			value := [2]byte{}
-			copy(value[:], dataBytes[:2])
-			return value, nil
-		case 8:
-			value := [8]byte{}
-			copy(value[:], dataBytes[:8])
-			return value, nil
-		case 16:
-			value := [16]byte{}
-			copy(value[:], dataBytes[:16])
-			return value, nil
-		case 32:
-			value := [32]byte{}
-			copy(value[:], dataBytes[:32])
-			return value, nil
+			return nil, err
 		}
 	}
-	return v, nil
+	// if array and size == 0
+	if ty.T == eABI.BytesTy || ty.Size == 0 {
+		return dataBytes, nil
+	}
+	if len(dataBytes) != ty.Size {
+		return nil, fmt.Errorf("invalid size: %d/%d", ty.Size, len(dataBytes))
+	}
+	switch ty.Size {
+	case 1:
+		value := [1]byte{}
+		copy(value[:], dataBytes[:1])
+		return value, nil
+	case 2:
+		value := [2]byte{}
+		copy(value[:], dataBytes[:2])
+		return value, nil
+	case 8:
+		value := [8]byte{}
+		copy(value[:], dataBytes[:8])
+		return value, nil
+	case 16:
+		value := [16]byte{}
+		copy(value[:], dataBytes[:16])
+		return value, nil
+	case 32:
+		value := [32]byte{}
+		copy(value[:], dataBytes[:32])
+		return value, nil
+	}
+	return nil, errors.New("failed to convert")
 }
 
 // Pack data into bytes
-func Pack(method string, param []Param) ([]byte, error) {
+func Pack(method string, params []any) ([]byte, error) {
+	if params == nil {
+		params = []any{}
+	}
 	signature := Signature(method)
-	pBytes, err := GetPaddedParam(param)
+	if len(params)%2 == 1 {
+		return nil, fmt.Errorf("expected even number of params, got %d", len(params))
+	}
+	pBytes, err := GetPaddedParam(params)
 	if err != nil {
 		return nil, err
 	}
